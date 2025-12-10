@@ -8,7 +8,6 @@ import mediapipe as mp
 from tensorflow.keras.layers import DepthwiseConv2D
 
 # --- 1. Fix for MobileNetV2 Loading (From Notebook) ---
-# هذا الكلاس ضروري جداً لتحميل المودل بدون أخطاء
 class FixedDepthwiseConv2D(DepthwiseConv2D):
     def __init__(self, **kwargs):
         kwargs.pop('groups', None)
@@ -28,15 +27,13 @@ COLOR_NO_MASK = (255, 0, 0)   # Pure Red
 COLOR_TEXT = (255, 255, 255)  # White Text
 
 # --- Constants & Paths ---
-# تأكدي أن اسم الملف هنا يطابق اسم المودل الجديد عندك
 MODEL_PATH = 'final_best_mask_model.h5' 
-IMG_SIZE = (224, 224) # تم التعديل ليطابق النوت بوك
+IMG_SIZE = (224, 224) 
 
 # --- Load Model (Cached) ---
 @st.cache_resource
 def load_trained_model():
     try:
-        # استخدام الكلاس المخصص أثناء التحميل
         model = tf.keras.models.load_model(MODEL_PATH, custom_objects={'DepthwiseConv2D': FixedDepthwiseConv2D})
         return model
     except Exception as e:
@@ -45,7 +42,6 @@ def load_trained_model():
 
 # --- Detection & Prediction Function ---
 def detect_and_predict(image, model, detection_confidence, model_selection_param):
-    # التأكد من أن الصورة بصيغة NumPy Array
     if isinstance(image, np.ndarray):
         image_np = image
     else:
@@ -54,7 +50,7 @@ def detect_and_predict(image, model, detection_confidence, model_selection_param
     output_image = image_np.copy()
     h, w, c = output_image.shape
     
-    # إعداد MediaPipe لكشف الوجوه
+    # Initialize MediaPipe Face Detection
     mp_face_detection = mp.solutions.face_detection
     face_found = False
     
@@ -64,39 +60,39 @@ def detect_and_predict(image, model, detection_confidence, model_selection_param
         if results.detections:
             face_found = True
             for detection in results.detections:
-                # استخراج إحداثيات الوجه
+                # Extract face bounding box coordinates
                 bboxC = detection.location_data.relative_bounding_box
                 x = int(bboxC.xmin * w)
                 y = int(bboxC.ymin * h)
                 wd = int(bboxC.width * w)
                 ht = int(bboxC.height * h)
                 
-                # تصحيح الإحداثيات
+                # Ensure coordinates are within image bounds
                 x = max(0, x)
                 y = max(0, y)
                 
-                # Tight Crop (بدون هوامش لزيادة الدقة مع المودل الجديد)
+                # Tight Crop 
                 x_new = x
                 y_new = y
                 w_new = wd
                 h_new = ht
                 
-                # قص صورة الوجه
+                # Extract/Crop the face Region of Interest (ROI)
                 face_roi = image_np[y_new:y_new+h_new, x_new:x_new+w_new]
                 
                 if face_roi.shape[0] > 0 and face_roi.shape[1] > 0:
                     try:
-                        # المعالجة (Preprocessing)
+                        # Preprocessing
                         processed_face = cv2.resize(face_roi, IMG_SIZE) # 224x224
                         processed_face = np.expand_dims(processed_face, axis=0)
                         processed_face = processed_face / 255.0 # Normalization
                         
-                        # التوقع (Prediction)
+                        # اPrediction
                         prediction = model.predict(processed_face, verbose=0)
-                        # فك القيمتين (نسبة الكمامة، نسبة عدم الكمامة)
+                        # Unpack predictions (Mask vs. No Mask probabilities)
                         (mask, withoutMask) = prediction[0]
                         
-                        # تحديد النتيجة
+                        # Determine class label and color
                         if mask > withoutMask:
                             label = "MASK"
                             color = COLOR_MASK
@@ -108,13 +104,13 @@ def detect_and_predict(image, model, detection_confidence, model_selection_param
                         
                         label_text = f"{label} {val*100:.0f}%"
                         
-                        # الرسم على الصورة
+                        # Draw bounding box on image
                         cv2.rectangle(output_image, (x, y), (x+wd, y+ht), color, 2)
                         
-                        # حساب أبعاد النص للخلفية
+                        # Calculate text size for label background
                         (text_w, text_h), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_DUPLEX, 0.6, 1)
                         
-                        # ضبط مكان النص (فوق أو تحت الوجه حسب المساحة)
+                        # Adjust label position (ensure it fits within frame)
                         if y - 25 > 0:
                             text_y = y - 6
                             rect_start = (x, y - 25)
@@ -160,7 +156,7 @@ else:
 
         detection_confidence = st.slider(
             "AI Sensitivity", 
-            min_value=0.1, max_value=0.9, value=0.3, # الحساسية الافتراضية 0.3 للكشف الأفضل
+            min_value=0.1, max_value=0.9, value=0.3, 
             help="Lower this value to detect faces more aggressively."
         )
     
@@ -173,7 +169,6 @@ else:
         uploaded_file = st.file_uploader("", type=["jpg", "png", "jpeg"])
 
         if uploaded_file is not None:
-            # معالجة دوران الصورة تلقائياً (EXIF)
             image = Image.open(uploaded_file)
             image = ImageOps.exif_transpose(image)
             
@@ -233,7 +228,6 @@ else:
         st_frame = st.empty()
         
         if run_camera:
-            # نفتح الكاميرا فقط عند تفعيل الزر لتجنب تعليق الجهاز
             camera = cv2.VideoCapture(0) 
             
             if not camera.isOpened():
@@ -245,10 +239,8 @@ else:
                         st.error("Failed to read frame from camera.")
                         break
                     
-                    # المعالجة
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     result_frame, _ = detect_and_predict(frame_rgb, model, detection_confidence, model_selection_param)
                     st_frame.image(result_frame, channels="RGB", use_container_width=True)
                 
-                # إغلاق الكاميرا عند إيقاف الزر
                 camera.release()
